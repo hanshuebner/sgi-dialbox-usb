@@ -81,31 +81,12 @@ void SetupHardware(void)
 
   PORTD |= (1 << PD2) | (1 << PD3);
 
-  TCCR0B = (1 << CS01);
-  TIMSK0 |= (1 << TOIE0);
-  sei();
+  TCCR0B = (1 << CS02) | (1 << CS00);
 }
 
-uint16_t counters[8];
+int8_t counters[8];
 
 // IRQ handler for timer IRQ - Increment all counters by one unless they're at 0x7FFF
-
-ISR (TIMER0_OVF_vect)
-{
-  PORTD &= ~(1 << PD1);
-  for (int i = 0; i < 8; i++) {
-    if (counters[i] != 0x7fff) {
-      counters[i]++;
-    }
-  }
-  PORTD |= (1 << PD1);
-}
-
-void
-report(uint8_t i, int16_t value)
-{
-  printf("%d => %d\n", i, value);
-}
 
 uint16_t oldState;
 
@@ -114,23 +95,10 @@ checkForEdges(uint16_t state)
 {
   uint16_t changed = state ^ oldState;
   for (int i = 0; i < 8; i++) {
-    uint16_t tmp;
-    if (changed & 1) {
-      cli();
-      tmp = counters[i];
-      counters[i] = 0;
-      sei();
-      if (tmp != 0x7ff) {
-        report(i, tmp);
-      }
-    } else if (changed & 2) {
-      cli();
-      tmp = counters[i];
-      counters[i] = 0;
-      sei();
-      if (tmp != 0x7ff) {
-        report(i, -tmp);
-      }
+    if ((changed & 1) && (counters[i] < 0x7f)) {
+      counters[i]++;
+    } else if ((changed & 2) && (counters[i] > 0x7f)) {
+      counters[i]--;
     }
     changed <<= 2;
   }
@@ -159,7 +127,47 @@ pollShiftRegisters(void)
   return (accu2 << 8) | accu1;
 }
 
+#define MIDI_COMMAND_CC 0xb0
 
+void
+sendMidiCc(uint8_t ccNumber, uint8_t value)
+{
+  MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t) {
+    .Event       = MIDI_EVENT(0, MIDI_COMMAND_CC),
+
+    .Data1       = MIDI_COMMAND_CC,
+    .Data2       = ccNumber,
+    .Data3       = value
+  };
+
+  MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
+}
+
+#define BASE_CC 102
+
+void
+checkSendTimer(void)
+{
+  if (TIFR0 & (1 << TOV0)) {
+    PORTD &= ~(1 << PD1);
+
+    TIFR0 |= (1 << TOV0);
+    bool sent = false;
+    for (uint8_t i = 0; i < 8; i++) {
+      if (1  || counters[i]) {
+        sendMidiCc(BASE_CC + (i << 1) + ((counters[i] > 0) ? 1 : 0),
+                   (counters[i] > 0) ? counters[i] : -counters[i]);
+        counters[i] = 0;
+        sent = true;
+      }
+    }
+    if (sent) {
+      MIDI_Device_Flush(&Keyboard_MIDI_Interface);
+    }
+
+    PORTD |= (1 << PD1);
+  }
+}
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
  */
@@ -173,6 +181,7 @@ int main(void)
   for (;;) {
     uint16_t state = pollShiftRegisters();
     checkForEdges(state);
+    checkSendTimer();
 
     MIDI_EventPacket_t ReceivedMIDIEvent;
     while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent)) {

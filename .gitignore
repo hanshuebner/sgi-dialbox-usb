@@ -1,0 +1,12 @@
+.DS_Store
+Descriptors.d
+Descriptors.o
+Documentation
+MIDI.d
+MIDI.eep
+MIDI.elf
+MIDI.hex
+MIDI.lss
+MIDI.map
+MIDI.o
+MIDI.sym
