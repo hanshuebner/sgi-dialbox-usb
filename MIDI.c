@@ -1,9 +1,9 @@
 /*
-             LUFA Library
-     Copyright (C) Dean Camera, 2013.
+  LUFA Library
+  Copyright (C) Dean Camera, 2013.
 
   dean [at] fourwalledcubicle [dot] com
-           www.lufa-lib.org
+  www.lufa-lib.org
 */
 
 /*
@@ -41,24 +41,123 @@
  *  within a device can be differentiated from one another.
  */
 USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface =
-	{
-		.Config =
-			{
-				.StreamingInterfaceNumber = 1,
-				.DataINEndpoint           =
-					{
-						.Address          = MIDI_STREAM_IN_EPADDR,
-						.Size             = MIDI_STREAM_EPSIZE,
-						.Banks            = 1,
-					},
-				.DataOUTEndpoint          =
-					{
-						.Address          = MIDI_STREAM_OUT_EPADDR,
-						.Size             = MIDI_STREAM_EPSIZE,
-						.Banks            = 1,
-					},
-			},
-	};
+  {
+    .Config =
+    {
+      .StreamingInterfaceNumber = 1,
+      .DataINEndpoint           =
+      {
+        .Address          = MIDI_STREAM_IN_EPADDR,
+        .Size             = MIDI_STREAM_EPSIZE,
+        .Banks            = 1,
+      },
+      .DataOUTEndpoint          =
+      {
+        .Address          = MIDI_STREAM_OUT_EPADDR,
+        .Size             = MIDI_STREAM_EPSIZE,
+        .Banks            = 1,
+      },
+    },
+  };
+
+
+/** Configures the board hardware and chip peripherals */
+void SetupHardware(void)
+{
+  /* Disable watchdog if enabled by bootloader/fuses */
+  MCUSR &= ~(1 << WDRF);
+  wdt_disable();
+
+  /* Disable clock division */
+  clock_prescale_set(clock_div_1);
+
+  /* Hardware Initialization */
+  LEDs_Init();
+  USB_Init();
+
+  DDRD = (1 << PD1) | (1 << PD2) | (1 << PD3);
+  PORTD = 1;
+  PORTF = 1;
+
+  PORTD |= (1 << PD2) | (1 << PD3);
+
+  TCCR0B = (1 << CS01);
+  TIMSK0 |= (1 << TOIE0);
+  sei();
+}
+
+uint16_t counters[8];
+
+// IRQ handler for timer IRQ - Increment all counters by one unless they're at 0x7FFF
+
+ISR (TIMER0_OVF_vect)
+{
+  PORTD &= ~(1 << PD1);
+  for (int i = 0; i < 8; i++) {
+    if (counters[i] != 0x7fff) {
+      counters[i]++;
+    }
+  }
+  PORTD |= (1 << PD1);
+}
+
+void
+report(uint8_t i, int16_t value)
+{
+  printf("%d => %d\n", i, value);
+}
+
+uint16_t oldState;
+
+void
+checkForEdges(uint16_t state)
+{
+  uint16_t changed = state ^ oldState;
+  for (int i = 0; i < 8; i++) {
+    uint16_t tmp;
+    if (changed & 1) {
+      cli();
+      tmp = counters[i];
+      counters[i] = 0;
+      sei();
+      if (tmp != 0x7ff) {
+        report(i, tmp);
+      }
+    } else if (changed & 2) {
+      cli();
+      tmp = counters[i];
+      counters[i] = 0;
+      sei();
+      if (tmp != 0x7ff) {
+        report(i, -tmp);
+      }
+    }
+    changed <<= 2;
+  }
+  oldState = state;
+}
+
+uint16_t
+pollShiftRegisters(void)
+{
+  // create load pulse on D0
+  PORTD &= ~(1 << PD2);
+  PORTD |= (1 << PD2);
+
+  // read data bits
+  uint8_t accu1 = 0;
+  uint8_t accu2 = 0;
+  for (int i = 0; i < 8; i++) {
+    accu1 <<= 1;
+    accu1 |= PIND & 1;
+    accu2 <<= 1;
+    accu2 |= PINF & 1;
+    PORTD &= ~(1 << PD3);
+    PORTD |= (1 << PD3);
+  }
+
+  return (accu2 << 8) | accu1;
+}
 
 
 /** Main program entry point. This routine contains the overall program flow, including initial
@@ -66,134 +165,54 @@ USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface =
  */
 int main(void)
 {
-	SetupHardware();
+  SetupHardware();
 
-	LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
-	GlobalInterruptEnable();
+  LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
+  GlobalInterruptEnable();
 
-	for (;;)
-	{
-		CheckJoystickMovement();
+  for (;;) {
+    uint16_t state = pollShiftRegisters();
+    checkForEdges(state);
 
-		MIDI_EventPacket_t ReceivedMIDIEvent;
-		while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent))
-		{
-			if ((ReceivedMIDIEvent.Event == MIDI_EVENT(0, MIDI_COMMAND_NOTE_ON)) && (ReceivedMIDIEvent.Data3 > 0))
-			  LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
-			else
-			  LEDs_SetAllLEDs(LEDS_NO_LEDS);
-		}
+    MIDI_EventPacket_t ReceivedMIDIEvent;
+    while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent)) {
+      if ((ReceivedMIDIEvent.Event == MIDI_EVENT(0, MIDI_COMMAND_NOTE_ON)) && (ReceivedMIDIEvent.Data3 > 0)) {
+        LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
+      } else {
+        LEDs_SetAllLEDs(LEDS_NO_LEDS);
+      }
+    }
 
-		MIDI_Device_USBTask(&Keyboard_MIDI_Interface);
-		USB_USBTask();
-	}
-}
-
-/** Configures the board hardware and chip peripherals for the demo's functionality. */
-void SetupHardware(void)
-{
-	/* Disable watchdog if enabled by bootloader/fuses */
-	MCUSR &= ~(1 << WDRF);
-	wdt_disable();
-
-	/* Disable clock division */
-	clock_prescale_set(clock_div_1);
-
-	/* Hardware Initialization */
-	Joystick_Init();
-	LEDs_Init();
-	Buttons_Init();
-	USB_Init();
-}
-
-/** Checks for changes in the position of the board joystick, sending MIDI events to the host upon each change. */
-void CheckJoystickMovement(void)
-{
-	static uint8_t PrevJoystickStatus;
-
-	uint8_t MIDICommand = 0;
-	uint8_t MIDIPitch;
-
-	/* Get current joystick mask, XOR with previous to detect joystick changes */
-	uint8_t JoystickStatus  = Joystick_GetStatus();
-	uint8_t JoystickChanges = (JoystickStatus ^ PrevJoystickStatus);
-
-	/* Get board button status - if pressed use channel 10 (percussion), otherwise use channel 1 */
-	uint8_t Channel = ((Buttons_GetStatus() & BUTTONS_BUTTON1) ? MIDI_CHANNEL(10) : MIDI_CHANNEL(1));
-
-	if (JoystickChanges & JOY_LEFT)
-	{
-		MIDICommand = ((JoystickStatus & JOY_LEFT)? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF);
-		MIDIPitch   = 0x3C;
-	}
-
-	if (JoystickChanges & JOY_UP)
-	{
-		MIDICommand = ((JoystickStatus & JOY_UP)? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF);
-		MIDIPitch   = 0x3D;
-	}
-
-	if (JoystickChanges & JOY_RIGHT)
-	{
-		MIDICommand = ((JoystickStatus & JOY_RIGHT)? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF);
-		MIDIPitch   = 0x3E;
-	}
-
-	if (JoystickChanges & JOY_DOWN)
-	{
-		MIDICommand = ((JoystickStatus & JOY_DOWN)? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF);
-		MIDIPitch   = 0x3F;
-	}
-
-	if (JoystickChanges & JOY_PRESS)
-	{
-		MIDICommand = ((JoystickStatus & JOY_PRESS)? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF);
-		MIDIPitch   = 0x3B;
-	}
-
-	if (MIDICommand)
-	{
-		MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t)
-			{
-				.Event       = MIDI_EVENT(0, MIDICommand),
-
-				.Data1       = MIDICommand | Channel,
-				.Data2       = MIDIPitch,
-				.Data3       = MIDI_STANDARD_VELOCITY,
-			};
-
-		MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
-		MIDI_Device_Flush(&Keyboard_MIDI_Interface);
-	}
-
-	PrevJoystickStatus = JoystickStatus;
+    MIDI_Device_USBTask(&Keyboard_MIDI_Interface);
+    USB_USBTask();
+  }
 }
 
 /** Event handler for the library USB Connection event. */
 void EVENT_USB_Device_Connect(void)
 {
-	LEDs_SetAllLEDs(LEDMASK_USB_ENUMERATING);
+  LEDs_SetAllLEDs(LEDMASK_USB_ENUMERATING);
 }
 
 /** Event handler for the library USB Disconnection event. */
 void EVENT_USB_Device_Disconnect(void)
 {
-	LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
+  LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
 }
 
 /** Event handler for the library USB Configuration Changed event. */
 void EVENT_USB_Device_ConfigurationChanged(void)
 {
-	bool ConfigSuccess = true;
+  bool ConfigSuccess = true;
 
-	ConfigSuccess &= MIDI_Device_ConfigureEndpoints(&Keyboard_MIDI_Interface);
+  ConfigSuccess &= MIDI_Device_ConfigureEndpoints(&Keyboard_MIDI_Interface);
 
-	LEDs_SetAllLEDs(ConfigSuccess ? LEDMASK_USB_READY : LEDMASK_USB_ERROR);
+  LEDs_SetAllLEDs(ConfigSuccess ? LEDMASK_USB_READY : LEDMASK_USB_ERROR);
 }
 
 /** Event handler for the library USB Control Request reception event. */
 void EVENT_USB_Device_ControlRequest(void)
 {
-	MIDI_Device_ProcessControlRequest(&Keyboard_MIDI_Interface);
+  MIDI_Device_ProcessControlRequest(&Keyboard_MIDI_Interface);
 }
 
