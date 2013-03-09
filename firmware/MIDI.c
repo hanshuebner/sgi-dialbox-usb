@@ -86,7 +86,7 @@ void SetupHardware(void)
 
 int16_t counters[8];
 
-// IRQ handler for timer IRQ - Increment all counters by one unless they're at 0x7FFF
+#define MAX_VALUE 0x7f
 
 uint16_t oldState;
 
@@ -96,11 +96,21 @@ checkForEdges(uint16_t state)
   uint16_t changed = state ^ oldState;
   oldState = state;
   for (int i = 0; i < 8; i++) {
-    if ((changed & 1) && !(state & 1)) {
-      if ((state & 2) && (counters[i] < 0x3ff)) {
-        counters[i]++;
-      } else if (!(state & 2) && (counters[i] > 0)) {
-        counters[i]--;
+    if (changed & 1) {
+      if (!(state & 1)) {
+        // falling edge
+        if ((state & 2) && (counters[i] < MAX_VALUE)) {
+          counters[i]++;
+        } else if (!(state & 2) && (counters[i] > -MAX_VALUE)) {
+          counters[i]--;
+        }
+      } else {
+        // rising edge
+        if (!(state & 2) && (counters[i] < MAX_VALUE)) {
+          counters[i]++;
+        } else if ((state & 2) && (counters[i] > -MAX_VALUE)) {
+          counters[i]--;
+        }
       }
     }
     changed >>= 2;
@@ -148,8 +158,6 @@ sendMidiCc(uint8_t ccNumber, uint8_t value)
 
 #define BASE_CC 102
 
-static int16_t oldCounters[8];
-
 void
 checkSendTimer(void)
 {
@@ -159,12 +167,14 @@ checkSendTimer(void)
     TIFR0 |= (1 << TOV0);
     bool sent = false;
     for (uint8_t i = 0; i < 8; i++) {
-      if (counters[i] != oldCounters[i]) {
-        sendMidiCc(BASE_CC + (i << 1), (counters[i] >> 7) & 0x7f);
-        sendMidiCc(BASE_CC + (i << 1) + 1, counters[i] & 0x7f);
-        oldCounters[i] = counters[i];
+      if (counters[i] > 0) {
+        sendMidiCc(BASE_CC + (i << 1), counters[i]);
+        sent = true;
+      } else if (counters[i] < 0) {
+        sendMidiCc(BASE_CC + (i << 1) + 1, -counters[i]);
         sent = true;
       }
+      counters[i] = 0;
     }
     if (sent) {
       MIDI_Device_Flush(&Keyboard_MIDI_Interface);
@@ -177,7 +187,8 @@ checkSendTimer(void)
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
  */
-int main(void)
+int
+main(void)
 {
   SetupHardware();
 
