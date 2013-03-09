@@ -94,15 +94,18 @@ void
 checkForEdges(uint16_t state)
 {
   uint16_t changed = state ^ oldState;
-  for (int i = 0; i < 8; i++) {
-    if ((changed & 1) && (counters[i] < 0x7f)) {
-      counters[i]++;
-    } else if ((changed & 2) && (counters[i] > 0x7f)) {
-      counters[i]--;
-    }
-    changed <<= 2;
-  }
   oldState = state;
+  for (int i = 0; i < 8; i++) {
+    if ((changed & 1) && !(state & 1)) {
+      if ((state & 2) && (counters[i] < 0x7f)) {
+        counters[i]++;
+      } else if (!(state & 2) && (counters[i] > -0x7f)) {
+        counters[i]--;
+      }
+    }
+    changed >>= 2;
+    state >>= 2;
+  }
 }
 
 uint16_t
@@ -155,8 +158,9 @@ checkSendTimer(void)
     bool sent = false;
     for (uint8_t i = 0; i < 8; i++) {
       if (counters[i]) {
-        sendMidiCc(BASE_CC + (i << 1) + ((counters[i] > 0) ? 1 : 0),
-                   (counters[i] > 0) ? counters[i] : -counters[i]);
+        bool positive = (counters[i] > 0);
+        sendMidiCc(BASE_CC + (i << 1) + (positive ? 1 : 0),
+                   positive ? counters[i] : -counters[i]);
         counters[i] = 0;
         sent = true;
       }
@@ -168,6 +172,7 @@ checkSendTimer(void)
     PORTD |= (1 << PD1);
   }
 }
+
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
  */
