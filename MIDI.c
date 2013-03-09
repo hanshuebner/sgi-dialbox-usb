@@ -84,7 +84,7 @@ void SetupHardware(void)
   TCCR0B = (1 << CS02) | (1 << CS00);
 }
 
-int8_t counters[8];
+int16_t counters[8];
 
 // IRQ handler for timer IRQ - Increment all counters by one unless they're at 0x7FFF
 
@@ -97,9 +97,9 @@ checkForEdges(uint16_t state)
   oldState = state;
   for (int i = 0; i < 8; i++) {
     if ((changed & 1) && !(state & 1)) {
-      if ((state & 2) && (counters[i] < 0x7f)) {
+      if ((state & 2) && (counters[i] < 0x3ff)) {
         counters[i]++;
-      } else if (!(state & 2) && (counters[i] > -0x7f)) {
+      } else if (!(state & 2) && (counters[i] > 0)) {
         counters[i]--;
       }
     }
@@ -148,6 +148,8 @@ sendMidiCc(uint8_t ccNumber, uint8_t value)
 
 #define BASE_CC 102
 
+static int16_t oldCounters[8];
+
 void
 checkSendTimer(void)
 {
@@ -157,11 +159,10 @@ checkSendTimer(void)
     TIFR0 |= (1 << TOV0);
     bool sent = false;
     for (uint8_t i = 0; i < 8; i++) {
-      if (counters[i]) {
-        bool positive = (counters[i] > 0);
-        sendMidiCc(BASE_CC + (i << 1) + (positive ? 1 : 0),
-                   positive ? counters[i] : -counters[i]);
-        counters[i] = 0;
+      if (counters[i] != oldCounters[i]) {
+        sendMidiCc(BASE_CC + (i << 1), (counters[i] >> 7) & 0x7f);
+        sendMidiCc(BASE_CC + (i << 1) + 1, counters[i] & 0x7f);
+        oldCounters[i] = counters[i];
         sent = true;
       }
     }
