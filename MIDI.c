@@ -154,7 +154,7 @@ checkSendTimer(void)
     TIFR0 |= (1 << TOV0);
     bool sent = false;
     for (uint8_t i = 0; i < 8; i++) {
-      if (1  || counters[i]) {
+      if (counters[i]) {
         sendMidiCc(BASE_CC + (i << 1) + ((counters[i] > 0) ? 1 : 0),
                    (counters[i] > 0) ? counters[i] : -counters[i]);
         counters[i] = 0;
