@@ -60,6 +60,14 @@ USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface =
     },
   };
 
+void
+jumpToLoader(void)
+{
+  // Jump to the HalfKay (or any other) boot loader
+
+  USBCON = 0;
+  asm("jmp 0x3000");
+}
 
 /** Configures the board hardware and chip peripherals */
 void SetupHardware(void)
@@ -100,16 +108,16 @@ checkForEdges(uint16_t state)
       if (!(state & 1)) {
         // falling edge
         if ((state & 2) && (counters[i] < MAX_VALUE)) {
-          counters[i]++;
-        } else if (!(state & 2) && (counters[i] > -MAX_VALUE)) {
           counters[i]--;
+        } else if (!(state & 2) && (counters[i] > -MAX_VALUE)) {
+          counters[i]++;
         }
       } else {
         // rising edge
         if (!(state & 2) && (counters[i] < MAX_VALUE)) {
-          counters[i]++;
-        } else if ((state & 2) && (counters[i] > -MAX_VALUE)) {
           counters[i]--;
+        } else if ((state & 2) && (counters[i] > -MAX_VALUE)) {
+          counters[i]++;
         }
       }
     }
@@ -156,7 +164,7 @@ sendMidiCc(uint8_t ccNumber, uint8_t value)
   MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
 }
 
-#define BASE_CC 102
+#define BASE_CC 20
 
 void
 checkSendTimer(void)
@@ -167,11 +175,12 @@ checkSendTimer(void)
     TIFR0 |= (1 << TOV0);
     bool sent = false;
     for (uint8_t i = 0; i < 8; i++) {
-      if (counters[i] > 0) {
-        sendMidiCc(BASE_CC + (i << 1), counters[i]);
+      int8_t counter = counters[i] & 0xff;
+      if (counter > 0) {
+        sendMidiCc(BASE_CC + i, (counter > 63) ? 63 : counter);
         sent = true;
       } else if (counters[i] < 0) {
-        sendMidiCc(BASE_CC + (i << 1) + 1, -counters[i]);
+        sendMidiCc(BASE_CC + i, ((counter < -63) ? -63 : counter) & 0x7f);
         sent = true;
       }
       counters[i] = 0;
@@ -195,6 +204,9 @@ main(void)
   LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
   GlobalInterruptEnable();
 
+  uint8_t bootloaderChordCount = 0;
+  const uint8_t bootloaderChordLength = 3;
+  uint8_t bootloaderChord[] = { 0, 3, 5 };
   for (;;) {
     uint16_t state = pollShiftRegisters();
     checkForEdges(state);
@@ -202,7 +214,17 @@ main(void)
 
     MIDI_EventPacket_t ReceivedMIDIEvent;
     while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent)) {
-      if ((ReceivedMIDIEvent.Event == MIDI_EVENT(0, MIDI_COMMAND_NOTE_ON)) && (ReceivedMIDIEvent.Data3 > 0)) {
+      if ((ReceivedMIDIEvent.Event == MIDI_EVENT(0, MIDI_COMMAND_NOTE_ON))
+          && (ReceivedMIDIEvent.Data3 > 0)) {
+        uint8_t note = ReceivedMIDIEvent.Data2;
+        if (note == bootloaderChord[bootloaderChordCount]) {
+          bootloaderChordCount++;
+          if (bootloaderChordCount == bootloaderChordLength) {
+            jumpToLoader();
+          }
+        } else {
+          bootloaderChordCount = 0;
+        }
         LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
       } else {
         LEDs_SetAllLEDs(LEDS_NO_LEDS);
