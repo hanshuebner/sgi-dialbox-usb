@@ -162,11 +162,16 @@ processSerial(void)
     
     int16_t delta = dialValue - oldDialValues[dialNumber];
 
-    // I've seen erratic values over +-60, so these are just filtered out
-    if (delta > 0 && delta < 60) {
-      sendMidiCc(BASE_CC + dialNumber, (delta > 63) ? 63 : delta);
-    } else if (delta < 0 && delta > -60) {
-      sendMidiCc(BASE_CC + dialNumber, ((delta < -63) ? -63 : delta) & 0x7f);
+    while (delta) {
+      int8_t value;
+      if (delta > 0) {
+        value = (delta > 63) ? 63 : delta;
+      } else if (delta < 0) {
+        value = (delta < -63) ? -63 : delta;
+      }
+      delta -= value;
+      value &= 0x7f;
+      sendMidiCc(BASE_CC + dialNumber, value);
     }
     MIDI_Device_Flush(&Keyboard_MIDI_Interface);
 
