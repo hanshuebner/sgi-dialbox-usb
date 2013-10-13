@@ -130,36 +130,46 @@ sendMidiCc(uint8_t ccNumber, uint8_t value)
 
 #define BASE_CC 20
 
-void
-processSerial(void)
+static uint16_t dialValues[8];
+
+ISR(USART1_RX_vect)
 {
   static uint8_t uartInputCount = 0;
   static uint8_t dialNumber;
   static uint16_t dialValue;
-  static uint16_t oldDialValues[8];
 
-  LED_ON;
-  if (uart_available()) {
-    int8_t c = uart_getchar();
-    switch (uartInputCount) {
-    case 0:
-      if ((c >= 0x30) && (c < 0x38)) {
-        dialNumber = c - 0x30;
-        uartInputCount = 1;
-      }
-      LED_OFF;
-      return; // note: early return
-    case 1:
-      dialValue = c << 8;
-      uartInputCount = 2;
-      return; // note: early return
-    case 2:
-      dialValue |= c;
+  uint8_t c = UDR1;
+  switch (uartInputCount) {
+  case 0:
+    if ((c >= 0x30) && (c < 0x38)) {
+      dialNumber = c - 0x30;
+      uartInputCount = 1;
     }
-    // we got a new dial value at this point
-
+    break;
+  case 1:
+    dialValue = c << 8;
+    uartInputCount = 2;
+    break;
+  case 2:
+    dialValue |= c;
+    dialValues[dialNumber] = dialValue;
     uartInputCount = 0;
-    
+    break;
+  }
+}
+
+static uint16_t oldDialValues[8];
+
+void
+pollDialValues(void)
+{
+  for (uint8_t dialNumber = 0; dialNumber < 8; dialNumber++) {
+    uint16_t dialValue;
+
+    cli();
+    dialValue = dialValues[dialNumber];
+    sei();
+
     int16_t delta = dialValue - oldDialValues[dialNumber];
 
     while (delta) {
@@ -192,7 +202,7 @@ main(void)
 
   for (;;) {
 
-    processSerial();
+    pollDialValues();
     
     MIDI_EventPacket_t ReceivedMIDIEvent;
     while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent)) {
