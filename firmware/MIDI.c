@@ -1,10 +1,4 @@
-/*
-  LUFA Library
-  Copyright (C) Dean Camera, 2013.
-
-  dean [at] fourwalledcubicle [dot] com
-  www.lufa-lib.org
-*/
+/* SGI Dialbox translator firmware (hans.huebner@gmail.com) */
 
 /*
   Copyright 2013  Dean Camera (dean [at] fourwalledcubicle [dot] com)
@@ -28,45 +22,66 @@
   this software.
 */
 
-/** \file
- *
- *  Main source file for the MIDI demo. This file contains the main tasks of
- *  the demo and is responsible for the initial application hardware configuration.
- */
+#include <avr/io.h>
+#include <avr/wdt.h>
+#include <avr/power.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdbool.h>
+#include <string.h>
 
-#include "MIDI.h"
+#include "Descriptors.h"
+#include "uart.h"
+
+#include <LUFA/Drivers/Board/LEDs.h>
+#include <LUFA/Drivers/USB/USB.h>
+
+#define BAUD_RATE 9600
+
+#define LED_CONFIG	(DDRD |= (1<<6))
+#define LED_ON		(PORTD |= (1<<6))
+#define LED_OFF		(PORTD &= ~(1<<6))
 
 /** LUFA MIDI Class driver interface configuration and state information. This structure is
  *  passed to all MIDI Class driver functions, so that multiple instances of the same class
  *  within a device can be differentiated from one another.
  */
-USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface =
+USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface = {
+  .Config =
   {
-    .Config =
+    .StreamingInterfaceNumber = 1,
+    .DataINEndpoint           =
     {
-      .StreamingInterfaceNumber = 1,
-      .DataINEndpoint           =
-      {
-        .Address          = MIDI_STREAM_IN_EPADDR,
-        .Size             = MIDI_STREAM_EPSIZE,
-        .Banks            = 1,
-      },
-      .DataOUTEndpoint          =
-      {
-        .Address          = MIDI_STREAM_OUT_EPADDR,
-        .Size             = MIDI_STREAM_EPSIZE,
-        .Banks            = 1,
-      },
+      .Address          = MIDI_STREAM_IN_EPADDR,
+      .Size             = MIDI_STREAM_EPSIZE,
+      .Banks            = 1,
     },
-  };
+    .DataOUTEndpoint          =
+    {
+      .Address          = MIDI_STREAM_OUT_EPADDR,
+      .Size             = MIDI_STREAM_EPSIZE,
+      .Banks            = 1,
+    },
+  },
+};
 
 void
 jumpToLoader(void)
 {
   // Jump to the HalfKay (or any other) boot loader
 
-  USBCON = 0;
-  asm("jmp 0x3000");
+  cli();
+  // disable watchdog, if enabled
+  // disable all peripherals
+  UDCON = 1;
+  USBCON = (1<<FRZCLK);  // disable USB
+  UCSR1B = 0;
+  _delay_ms(5);
+  EIMSK = 0; PCICR = 0; SPCR = 0; ACSR = 0; EECR = 0; ADCSRA = 0;
+  TIMSK0 = 0; TIMSK1 = 0; TIMSK3 = 0; TIMSK4 = 0; UCSR1B = 0; TWCR = 0;
+  DDRB = 0; DDRC = 0; DDRD = 0; DDRE = 0; DDRF = 0; TWCR = 0;
+  PORTB = 0; PORTC = 0; PORTD = 0; PORTE = 0; PORTF = 0;
+  asm volatile("jmp 0x7E00");
 }
 
 /** Configures the board hardware and chip peripherals */
@@ -80,72 +95,20 @@ void SetupHardware(void)
   clock_prescale_set(clock_div_1);
 
   /* Hardware Initialization */
-  LEDs_Init();
+  LED_CONFIG;
   USB_Init();
 
-  DDRD = (1 << PD1) | (1 << PD2) | (1 << PD3);
-  PORTD = 1;
-  PORTF = 1;
+  uart_init(BAUD_RATE);
 
-  PORTD |= (1 << PD2) | (1 << PD3);
-
-  TCCR0B = (1 << CS02) | (1 << CS00);
-}
-
-int16_t counters[8];
-
-#define MAX_VALUE 0x7f
-
-uint16_t oldState;
-
-void
-checkForEdges(uint16_t state)
-{
-  uint16_t changed = state ^ oldState;
-  oldState = state;
-  for (int i = 0; i < 8; i++) {
-    if (changed & 1) {
-      if (!(state & 1)) {
-        // falling edge
-        if ((state & 2) && (counters[i] < MAX_VALUE)) {
-          counters[i]--;
-        } else if (!(state & 2) && (counters[i] > -MAX_VALUE)) {
-          counters[i]++;
-        }
-      } else {
-        // rising edge
-        if (!(state & 2) && (counters[i] < MAX_VALUE)) {
-          counters[i]--;
-        } else if ((state & 2) && (counters[i] > -MAX_VALUE)) {
-          counters[i]++;
-        }
-      }
-    }
-    changed >>= 2;
-    state >>= 2;
-  }
-}
-
-uint16_t
-pollShiftRegisters(void)
-{
-  // create load pulse on D0
-  PORTD &= ~(1 << PD2);
-  PORTD |= (1 << PD2);
-
-  // read data bits
-  uint8_t accu1 = 0;
-  uint8_t accu2 = 0;
-  for (int i = 0; i < 8; i++) {
-    accu1 <<= 1;
-    accu1 |= PIND & 1;
-    accu2 <<= 1;
-    accu2 |= PINF & 1;
-    PORTD &= ~(1 << PD3);
-    PORTD |= (1 << PD3);
-  }
-
-  return (accu2 << 8) | accu1;
+  LED_ON;
+  _delay_ms(300);
+  LED_OFF;
+  uart_putchar(0x20);
+  uart_putchar(0x50);
+  uart_putchar(0x00);
+  uart_putchar(0xFF);
+  _delay_ms(300);
+  LED_ON;
 }
 
 #define MIDI_COMMAND_CC 0xb0
@@ -164,54 +127,68 @@ sendMidiCc(uint8_t ccNumber, uint8_t value)
   MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
 }
 
+
 #define BASE_CC 20
 
 void
-checkSendTimer(void)
+processSerial(void)
 {
-  if (TIFR0 & (1 << TOV0)) {
-    PORTD &= ~(1 << PD1);
+  static uint8_t uartInputCount = 0;
+  static uint8_t dialNumber;
+  static uint16_t dialValue;
+  static uint16_t oldDialValues[8];
 
-    TIFR0 |= (1 << TOV0);
-    bool sent = false;
-    for (uint8_t i = 0; i < 8; i++) {
-      int8_t counter = counters[i] & 0xff;
-      if (counter > 0) {
-        sendMidiCc(BASE_CC + i, (counter > 63) ? 63 : counter);
-        sent = true;
-      } else if (counters[i] < 0) {
-        sendMidiCc(BASE_CC + i, ((counter < -63) ? -63 : counter) & 0x7f);
-        sent = true;
+  LED_ON;
+  if (uart_available()) {
+    int8_t c = uart_getchar();
+    switch (uartInputCount) {
+    case 0:
+      if ((c >= 0x30) && (c < 0x38)) {
+        dialNumber = c - 0x30;
+        uartInputCount = 1;
       }
-      counters[i] = 0;
+      LED_OFF;
+      return; // note: early return
+    case 1:
+      dialValue = c << 8;
+      uartInputCount = 2;
+      return; // note: early return
+    case 2:
+      dialValue |= c;
     }
-    if (sent) {
-      MIDI_Device_Flush(&Keyboard_MIDI_Interface);
-    }
+    // we got a new dial value at this point
 
-    PORTD |= (1 << PD1);
+    uartInputCount = 0;
+    
+    int16_t delta = dialValue - oldDialValues[dialNumber];
+
+    // I've seen erratic values over +-60, so these are just filtered out
+    if (delta > 0 && delta < 60) {
+      sendMidiCc(BASE_CC + dialNumber, (delta > 63) ? 63 : delta);
+    } else if (delta < 0 && delta > -60) {
+      sendMidiCc(BASE_CC + dialNumber, ((delta < -63) ? -63 : delta) & 0x7f);
+    }
+    MIDI_Device_Flush(&Keyboard_MIDI_Interface);
+
+    oldDialValues[dialNumber] = dialValue;
   }
 }
 
-/** Main program entry point. This routine contains the overall program flow, including initial
- *  setup of all components and the main program loop.
- */
 int
 main(void)
 {
   SetupHardware();
 
-  LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
   GlobalInterruptEnable();
 
   uint8_t bootloaderChordCount = 0;
   const uint8_t bootloaderChordLength = 3;
   uint8_t bootloaderChord[] = { 0, 3, 5 };
-  for (;;) {
-    uint16_t state = pollShiftRegisters();
-    checkForEdges(state);
-    checkSendTimer();
 
+  for (;;) {
+
+    processSerial();
+    
     MIDI_EventPacket_t ReceivedMIDIEvent;
     while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent)) {
       if ((ReceivedMIDIEvent.Event == MIDI_EVENT(0, MIDI_COMMAND_NOTE_ON))
@@ -236,26 +213,12 @@ main(void)
   }
 }
 
-/** Event handler for the library USB Connection event. */
-void EVENT_USB_Device_Connect(void)
-{
-  LEDs_SetAllLEDs(LEDMASK_USB_ENUMERATING);
-}
-
-/** Event handler for the library USB Disconnection event. */
-void EVENT_USB_Device_Disconnect(void)
-{
-  LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
-}
-
 /** Event handler for the library USB Configuration Changed event. */
 void EVENT_USB_Device_ConfigurationChanged(void)
 {
   bool ConfigSuccess = true;
 
   ConfigSuccess &= MIDI_Device_ConfigureEndpoints(&Keyboard_MIDI_Interface);
-
-  LEDs_SetAllLEDs(ConfigSuccess ? LEDMASK_USB_READY : LEDMASK_USB_ERROR);
 }
 
 /** Event handler for the library USB Control Request reception event. */

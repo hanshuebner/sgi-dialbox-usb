@@ -36,19 +36,6 @@
 #ifndef _AUDIO_OUTPUT_H_
 #define _AUDIO_OUTPUT_H_
 
-/* Includes: */
-#include <avr/io.h>
-#include <avr/wdt.h>
-#include <avr/power.h>
-#include <avr/interrupt.h>
-#include <util/delay.h>
-#include <stdbool.h>
-#include <string.h>
-
-#include "Descriptors.h"
-
-#include <LUFA/Drivers/Board/LEDs.h>
-#include <LUFA/Drivers/USB/USB.h>
 
 /* Macros: */
 /** LED mask for the library LED driver, to indicate that the USB interface is not ready. */
