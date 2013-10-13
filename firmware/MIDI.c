@@ -101,13 +101,13 @@ void SetupHardware(void)
   uart_init(BAUD_RATE);
 
   LED_ON;
-  _delay_ms(300);
+  _delay_ms(1000);
   LED_OFF;
   uart_putchar(0x20);
   uart_putchar(0x50);
   uart_putchar(0x00);
   uart_putchar(0xFF);
-  _delay_ms(300);
+  _delay_ms(100);
   LED_ON;
 }
 
